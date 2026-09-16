@@ -7,4 +7,6 @@ public class UnitOfWork(NovaWalletDbContext context) : IUnitOfWork
 {
     public Task<int> SaveChangesAsync(CancellationToken cancellationToken) =>
         context.SaveChangesAsync(cancellationToken);
+
+    public void ResetTracking() => context.ChangeTracker.Clear();
 }

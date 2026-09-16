@@ -22,4 +22,11 @@ public class WalletsController(WalletService walletService) : NovaWalletControll
         var wallet = await walletService.GetBalanceAsync(walletId, cancellationToken);
         return Success(wallet, "Balance retrieved");
     }
+
+    [HttpPost("credit")]
+    public async Task<IActionResult> Credit([FromQuery] Guid walletId, [FromBody] CreditWalletRequest request, CancellationToken cancellationToken)
+    {
+        var wallet = await walletService.CreditAsync(walletId, request, cancellationToken);
+        return Success(wallet, "Wallet credited");
+    }
 }

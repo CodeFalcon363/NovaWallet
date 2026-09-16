@@ -17,12 +17,13 @@ public class WalletServiceTests(SqlServerFixture fixture)
     {
         var walletRepository = new WalletRepository(context);
         var walletQueries = new WalletQueries(fixture.CreateConnectionFactory());
+        var ledgerTransactionRepository = new LedgerTransactionRepository(context);
         var auditLogRepository = new AuditLogRepository(context);
         var outboxRepository = new OutboxRepository(context);
         var unitOfWork = new UnitOfWork(context);
         var callerContext = new FakeCallerContext(callerCustomerId);
 
-        return new WalletService(walletRepository, walletQueries, auditLogRepository, outboxRepository, unitOfWork, callerContext);
+        return new WalletService(walletRepository, walletQueries, ledgerTransactionRepository, auditLogRepository, outboxRepository, unitOfWork, callerContext);
     }
 
     [Fact]
@@ -144,5 +145,105 @@ public class WalletServiceTests(SqlServerFixture fixture)
             otherService.GetBalanceAsync(walletId, CancellationToken.None));
 
         Assert.Equal(403, exception.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreditAsync_Increases_Balance_And_Writes_Ledger_And_Audit()
+    {
+        var customerId = $"cust-{Guid.NewGuid():N}";
+        Guid walletId;
+
+        await using (var createContext = fixture.CreateDbContext())
+        {
+            var createService = CreateService(createContext, customerId);
+            var created = await createService.CreateWalletAsync(new CreateWalletRequest { CustomerId = customerId }, CancellationToken.None);
+            walletId = created.WalletId;
+        }
+
+        await using var creditContext = fixture.CreateDbContext();
+        var creditService = CreateService(creditContext, customerId);
+
+        var result = await creditService.CreditAsync(walletId, new CreditWalletRequest { AmountMinor = 50_000 }, CancellationToken.None);
+
+        Assert.Equal(50_000, result.BalanceMinor);
+
+        await using var verifyContext = fixture.CreateDbContext();
+        var ledgerEntry = Assert.Single(verifyContext.LedgerTransactions, t => t.WalletId == walletId);
+        Assert.Equal(NovaWallet.Core.Entities.LedgerTransactionType.Credit, ledgerEntry.Type);
+        Assert.Equal(50_000, ledgerEntry.AmountMinor);
+        Assert.Equal(50_000, ledgerEntry.BalanceAfterMinor);
+
+        var auditEntry = Assert.Single(verifyContext.AuditLogEntries, a => a.WalletId == walletId && a.Action == "BalanceCredited");
+        Assert.Equal(0, auditEntry.BalanceBeforeMinor);
+        Assert.Equal(50_000, auditEntry.BalanceAfterMinor);
+    }
+
+    [Fact]
+    public async Task CreditAsync_Throws_NotFound_For_Unknown_Wallet()
+    {
+        await using var context = fixture.CreateDbContext();
+        var service = CreateService(context, "some-customer");
+
+        var exception = await Assert.ThrowsAsync<WalletNotFoundException>(() =>
+            service.CreditAsync(Guid.NewGuid(), new CreditWalletRequest { AmountMinor = 100 }, CancellationToken.None));
+
+        Assert.Equal(404, exception.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreditAsync_Throws_Forbidden_When_Caller_Is_Not_Owner()
+    {
+        var ownerCustomerId = $"cust-{Guid.NewGuid():N}";
+        Guid walletId;
+
+        await using (var createContext = fixture.CreateDbContext())
+        {
+            var createService = CreateService(createContext, ownerCustomerId);
+            var created = await createService.CreateWalletAsync(new CreateWalletRequest { CustomerId = ownerCustomerId }, CancellationToken.None);
+            walletId = created.WalletId;
+        }
+
+        await using var creditContext = fixture.CreateDbContext();
+        var otherService = CreateService(creditContext, "a-different-customer");
+
+        var exception = await Assert.ThrowsAsync<ForbiddenException>(() =>
+            otherService.CreditAsync(walletId, new CreditWalletRequest { AmountMinor = 100 }, CancellationToken.None));
+
+        Assert.Equal(403, exception.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreditAsync_Under_Concurrent_Load_Sums_Correctly_No_Lost_Updates()
+    {
+        var customerId = $"cust-{Guid.NewGuid():N}";
+        Guid walletId;
+
+        await using (var createContext = fixture.CreateDbContext())
+        {
+            var createService = CreateService(createContext, customerId);
+            var created = await createService.CreateWalletAsync(new CreateWalletRequest { CustomerId = customerId }, CancellationToken.None);
+            walletId = created.WalletId;
+        }
+
+        const int concurrentRequests = 20;
+        const long amountPerCredit = 1_000;
+
+        var tasks = Enumerable.Range(0, concurrentRequests).Select(async _ =>
+        {
+            // Each simulated concurrent request gets its own DbContext, exactly as a real HTTP
+            // request would via per-scope DI — this is what actually exercises the retry loop.
+            await using var context = fixture.CreateDbContext();
+            var service = CreateService(context, customerId);
+            await service.CreditAsync(walletId, new CreditWalletRequest { AmountMinor = amountPerCredit }, CancellationToken.None);
+        });
+
+        await Task.WhenAll(tasks);
+
+        await using var verifyContext = fixture.CreateDbContext();
+        var wallet = await verifyContext.Wallets.FindAsync(walletId);
+        Assert.Equal(concurrentRequests * amountPerCredit, wallet!.BalanceMinor);
+
+        var ledgerCount = verifyContext.LedgerTransactions.Count(t => t.WalletId == walletId);
+        Assert.Equal(concurrentRequests, ledgerCount);
     }
 }

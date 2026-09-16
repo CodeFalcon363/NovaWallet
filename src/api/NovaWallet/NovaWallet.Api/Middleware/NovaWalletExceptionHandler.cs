@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using NovaWallet.Core.Exceptions;
 
 namespace NovaWallet.Api.Middleware;
@@ -13,9 +14,7 @@ public class NovaWalletExceptionHandler(IProblemDetailsService problemDetailsSer
 {
     public async ValueTask<bool> TryHandleAsync(HttpContext httpContext, Exception exception, CancellationToken cancellationToken)
     {
-        var statusCode = exception is NovaWalletDomainException domainException
-            ? domainException.StatusCode
-            : StatusCodes.Status500InternalServerError;
+        var (statusCode, message) = Classify(exception);
 
         if (statusCode == StatusCodes.Status500InternalServerError)
         {
@@ -31,9 +30,18 @@ public class NovaWalletExceptionHandler(IProblemDetailsService problemDetailsSer
             ProblemDetails = new ProblemDetails
             {
                 Status = statusCode,
-                Title = statusCode == StatusCodes.Status500InternalServerError ? "An unexpected error occurred." : exception.Message,
-                Detail = statusCode == StatusCodes.Status500InternalServerError ? null : exception.Message,
+                Title = statusCode == StatusCodes.Status500InternalServerError ? "An unexpected error occurred." : message,
+                Detail = statusCode == StatusCodes.Status500InternalServerError ? null : message,
             },
         });
     }
+
+    private static (int StatusCode, string Message) Classify(Exception exception) => exception switch
+    {
+        NovaWalletDomainException domainException => (domainException.StatusCode, domainException.Message),
+        // Only reached if every retry attempt in ConcurrencyRetry was exhausted — a real, if rare,
+        // outcome under very heavy contention on a single wallet, not an internal server error.
+        DbUpdateConcurrencyException => (StatusCodes.Status409Conflict, "The wallet was updated concurrently by another request. Please retry."),
+        _ => (StatusCodes.Status500InternalServerError, "An unexpected error occurred."),
+    };
 }

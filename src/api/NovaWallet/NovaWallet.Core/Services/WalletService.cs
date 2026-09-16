@@ -11,6 +11,7 @@ namespace NovaWallet.Core.Services;
 public class WalletService(
     IWalletRepository walletRepository,
     IWalletQueries walletQueries,
+    ILedgerTransactionRepository ledgerTransactionRepository,
     IAuditLogRepository auditLogRepository,
     IOutboxRepository outboxRepository,
     IUnitOfWork unitOfWork,
@@ -78,4 +79,53 @@ public class WalletService(
 
         return new WalletResponse(balance.WalletId, balance.BalanceMinor, balance.Currency);
     }
+
+    public Task<WalletResponse> CreditAsync(Guid walletId, CreditWalletRequest request, CancellationToken cancellationToken) =>
+        ConcurrencyRetry.ExecuteAsync(unitOfWork, async () =>
+        {
+            var wallet = await walletRepository.GetTrackedAsync(walletId, cancellationToken)
+                ?? throw new WalletNotFoundException(walletId);
+
+            if (wallet.CustomerId != callerContext.ActorId)
+            {
+                throw new ForbiddenException("You may only credit your own wallet.");
+            }
+
+            var balanceBefore = wallet.BalanceMinor;
+            wallet.BalanceMinor += request.AmountMinor;
+
+            ledgerTransactionRepository.Add(new LedgerTransaction
+            {
+                TransactionId = Guid.NewGuid(),
+                WalletId = wallet.WalletId,
+                Type = LedgerTransactionType.Credit,
+                AmountMinor = request.AmountMinor,
+                BalanceAfterMinor = wallet.BalanceMinor,
+                CreatedAtUtc = DateTime.UtcNow,
+            });
+
+            auditLogRepository.Append(new AuditLogEntry
+            {
+                AuditId = Guid.NewGuid(),
+                WalletId = wallet.WalletId,
+                Action = AuditActions.BalanceCredited,
+                ActorId = callerContext.ActorId,
+                IpAddress = callerContext.IpAddress,
+                BalanceBeforeMinor = balanceBefore,
+                BalanceAfterMinor = wallet.BalanceMinor,
+                CreatedAtUtc = DateTime.UtcNow,
+            });
+
+            outboxRepository.Add(new OutboxMessage
+            {
+                OutboxMessageId = Guid.NewGuid(),
+                Type = OutboxEventTypes.WalletCredited,
+                PayloadJson = JsonSerializer.Serialize(new { wallet.WalletId, request.AmountMinor, NewBalanceMinor = wallet.BalanceMinor }),
+                CreatedAtUtc = DateTime.UtcNow,
+            });
+
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+
+            return new WalletResponse(wallet.WalletId, wallet.BalanceMinor, wallet.Currency);
+        });
 }
