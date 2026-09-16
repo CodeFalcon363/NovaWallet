@@ -16,7 +16,8 @@ namespace NovaWallet.Api
                 .AddNovaWalletPersistence()
                 .AddNovaWalletRepositories()
                 .AddNovaWalletApplicationServices()
-                .AddNovaWalletJwtAuthentication();
+                .AddNovaWalletJwtAuthentication()
+                .AddNovaWalletOutboxDispatch();
 
             builder.Services.AddProblemDetails();
             builder.Services.AddExceptionHandler<NovaWalletExceptionHandler>();

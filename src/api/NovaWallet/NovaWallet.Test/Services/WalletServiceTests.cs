@@ -17,13 +17,15 @@ public class WalletServiceTests(SqlServerFixture fixture)
     {
         var walletRepository = new WalletRepository(context);
         var walletQueries = new WalletQueries(fixture.CreateConnectionFactory());
+        var statementQueries = new StatementQueries(fixture.CreateConnectionFactory());
+        var auditQueries = new AuditQueries(fixture.CreateConnectionFactory());
         var ledgerTransactionRepository = new LedgerTransactionRepository(context);
         var auditLogRepository = new AuditLogRepository(context);
         var outboxRepository = new OutboxRepository(context);
         var unitOfWork = new UnitOfWork(context);
         var callerContext = new FakeCallerContext(callerCustomerId);
 
-        return new WalletService(walletRepository, walletQueries, ledgerTransactionRepository, auditLogRepository, outboxRepository, unitOfWork, callerContext);
+        return new WalletService(walletRepository, walletQueries, statementQueries, auditQueries, ledgerTransactionRepository, auditLogRepository, outboxRepository, unitOfWork, callerContext);
     }
 
     [Fact]
@@ -245,5 +247,110 @@ public class WalletServiceTests(SqlServerFixture fixture)
 
         var ledgerCount = verifyContext.LedgerTransactions.Count(t => t.WalletId == walletId);
         Assert.Equal(concurrentRequests, ledgerCount);
+    }
+
+    [Fact]
+    public async Task GetStatementAsync_Returns_Entries_Newest_First_Paginated()
+    {
+        var customerId = $"cust-{Guid.NewGuid():N}";
+        Guid walletId;
+
+        await using (var setupContext = fixture.CreateDbContext())
+        {
+            var setupService = CreateService(setupContext, customerId);
+            var created = await setupService.CreateWalletAsync(new CreateWalletRequest { CustomerId = customerId }, CancellationToken.None);
+            walletId = created.WalletId;
+
+            for (var i = 1; i <= 5; i++)
+            {
+                await using var creditContext = fixture.CreateDbContext();
+                var creditService = CreateService(creditContext, customerId);
+                await creditService.CreditAsync(walletId, new CreditWalletRequest { AmountMinor = i * 100 }, CancellationToken.None);
+            }
+        }
+
+        await using var readContext = fixture.CreateDbContext();
+        var readService = CreateService(readContext, customerId);
+
+        var page1 = await readService.GetStatementAsync(walletId, page: 1, pageSize: 3, CancellationToken.None);
+
+        Assert.Equal(5, page1.TotalCount);
+        Assert.Equal(3, page1.Items.Count);
+        // Newest first: the last credit (500) should be first.
+        Assert.Equal(500, page1.Items[0].AmountMinor);
+        Assert.True(page1.Items[0].CreatedAtUtc >= page1.Items[1].CreatedAtUtc);
+
+        var page2 = await readService.GetStatementAsync(walletId, page: 2, pageSize: 3, CancellationToken.None);
+        Assert.Equal(2, page2.Items.Count);
+    }
+
+    [Fact]
+    public async Task GetStatementAsync_Throws_Forbidden_When_Not_Owner()
+    {
+        var ownerCustomerId = $"cust-{Guid.NewGuid():N}";
+        Guid walletId;
+
+        await using (var createContext = fixture.CreateDbContext())
+        {
+            var createService = CreateService(createContext, ownerCustomerId);
+            var created = await createService.CreateWalletAsync(new CreateWalletRequest { CustomerId = ownerCustomerId }, CancellationToken.None);
+            walletId = created.WalletId;
+        }
+
+        await using var readContext = fixture.CreateDbContext();
+        var otherService = CreateService(readContext, "a-different-customer");
+
+        var exception = await Assert.ThrowsAsync<ForbiddenException>(() =>
+            otherService.GetStatementAsync(walletId, 1, 20, CancellationToken.None));
+
+        Assert.Equal(403, exception.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAuditTrailAsync_Returns_Entries_With_Actor_And_Ip()
+    {
+        var customerId = $"cust-{Guid.NewGuid():N}";
+        Guid walletId;
+
+        await using (var setupContext = fixture.CreateDbContext())
+        {
+            var setupService = CreateService(setupContext, customerId);
+            var created = await setupService.CreateWalletAsync(new CreateWalletRequest { CustomerId = customerId }, CancellationToken.None);
+            walletId = created.WalletId;
+        }
+
+        await using var readContext = fixture.CreateDbContext();
+        var readService = CreateService(readContext, customerId);
+
+        var audit = await readService.GetAuditTrailAsync(walletId, 1, 20, CancellationToken.None);
+
+        var entry = Assert.Single(audit.Items);
+        Assert.Equal("WalletCreated", entry.Action);
+        Assert.Equal(customerId, entry.ActorId);
+        Assert.Equal("127.0.0.1", entry.IpAddress);
+        Assert.Null(entry.BalanceBeforeMinor);
+        Assert.Equal(0, entry.BalanceAfterMinor);
+    }
+
+    [Fact]
+    public async Task GetAuditTrailAsync_Throws_Forbidden_When_Not_Owner()
+    {
+        var ownerCustomerId = $"cust-{Guid.NewGuid():N}";
+        Guid walletId;
+
+        await using (var createContext = fixture.CreateDbContext())
+        {
+            var createService = CreateService(createContext, ownerCustomerId);
+            var created = await createService.CreateWalletAsync(new CreateWalletRequest { CustomerId = ownerCustomerId }, CancellationToken.None);
+            walletId = created.WalletId;
+        }
+
+        await using var readContext = fixture.CreateDbContext();
+        var otherService = CreateService(readContext, "a-different-customer");
+
+        var exception = await Assert.ThrowsAsync<ForbiddenException>(() =>
+            otherService.GetAuditTrailAsync(walletId, 1, 20, CancellationToken.None));
+
+        Assert.Equal(403, exception.StatusCode);
     }
 }

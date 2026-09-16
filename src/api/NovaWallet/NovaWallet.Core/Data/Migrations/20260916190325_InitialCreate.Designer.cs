@@ -12,7 +12,7 @@ using NovaWallet.Core.Data;
 namespace NovaWallet.Core.Data.Migrations
 {
     [DbContext(typeof(NovaWalletDbContext))]
-    [Migration("20260916175328_InitialCreate")]
+    [Migration("20260916190325_InitialCreate")]
     partial class InitialCreate
     {
         /// <inheritdoc />
@@ -113,8 +113,10 @@ namespace NovaWallet.Core.Data.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)");
 
-                    b.Property<int>("Type")
-                        .HasColumnType("int");
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
 
                     b.Property<Guid>("WalletId")
                         .HasColumnType("uniqueidentifier");
@@ -181,8 +183,10 @@ namespace NovaWallet.Core.Data.Migrations
                     b.Property<Guid?>("ResultTransactionId")
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<int>("Status")
-                        .HasColumnType("int");
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
 
                     b.HasKey("IdempotencyKey");
 

@@ -3,12 +3,14 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using NovaWallet.Api.BackgroundServices;
 using NovaWallet.Api.Security;
 using NovaWallet.Core.Data;
 using NovaWallet.Core.Interfaces;
 using NovaWallet.Core.Queries;
 using NovaWallet.Core.Repositories;
 using NovaWallet.Core.Services;
+using NovaWallet.Infrastructure.ExternalServices;
 
 namespace NovaWallet.Api.Extensions;
 
@@ -46,6 +48,8 @@ public static class ServiceExtension
         services.AddScoped<IOutboxRepository, OutboxRepository>();
         services.AddScoped<IUnitOfWork, UnitOfWork>();
         services.AddScoped<IWalletQueries, WalletQueries>();
+        services.AddScoped<IStatementQueries, StatementQueries>();
+        services.AddScoped<IAuditQueries, AuditQueries>();
         return services;
     }
 
@@ -94,6 +98,15 @@ public static class ServiceExtension
             });
 
         services.AddAuthorization();
+        return services;
+    }
+
+    public static IServiceCollection AddNovaWalletOutboxDispatch(this IServiceCollection services)
+    {
+        services.AddOptions<RabbitMqOptions>().BindConfiguration(RabbitMqOptions.SectionName);
+        services.AddSingleton<IEventPublisher, RabbitMqPublisher>();
+        services.AddScoped<OutboxDispatcherService>();
+        services.AddHostedService<OutboxBackgroundService>();
         return services;
     }
 }

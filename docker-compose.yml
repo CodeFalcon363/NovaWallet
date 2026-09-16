@@ -12,6 +12,20 @@ services:
       timeout: 5s
       retries: 20
 
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    environment:
+      RABBITMQ_DEFAULT_USER: "novawallet"
+      RABBITMQ_DEFAULT_PASS: "NovaWallet_Dev_Pw1!"
+    ports:
+      - "5672:5672"
+      - "15672:15672" # management UI, for judges to inspect published events
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   api:
     build:
       context: src/api/NovaWallet
@@ -21,6 +35,11 @@ services:
     environment:
       ASPNETCORE_URLS: "http://+:8080"
       ConnectionStrings__NovaWalletDb: "Server=sqlserver,1433;Database=NovaWallet;User Id=sa;Password=NovaWallet_Dev_Pw1!;TrustServerCertificate=True;"
+      RabbitMq__HostName: "rabbitmq"
+      RabbitMq__UserName: "novawallet"
+      RabbitMq__Password: "NovaWallet_Dev_Pw1!"
     depends_on:
       sqlserver:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy

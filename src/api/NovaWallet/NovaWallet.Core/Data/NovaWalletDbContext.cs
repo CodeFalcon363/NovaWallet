@@ -25,11 +25,15 @@ public class NovaWalletDbContext(DbContextOptions<NovaWalletDbContext> options) 
         {
             e.HasKey(t => t.TransactionId);
             e.HasIndex(t => new { t.WalletId, t.CreatedAtUtc });
+            // Stored as text, not the default int, so the transaction table judges can query
+            // directly (task brief §2.1) reads "TransferOut" rather than a magic number.
+            e.Property(t => t.Type).HasConversion<string>().HasMaxLength(20);
         });
 
         modelBuilder.Entity<TransferIdempotencyRecord>(e =>
         {
             e.HasKey(r => r.IdempotencyKey);
+            e.Property(r => r.Status).HasConversion<string>().HasMaxLength(20);
         });
 
         modelBuilder.Entity<AuditLogEntry>(e =>

@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NovaWallet.Core.Models;
@@ -28,5 +29,27 @@ public class WalletsController(WalletService walletService) : NovaWalletControll
     {
         var wallet = await walletService.CreditAsync(walletId, request, cancellationToken);
         return Success(wallet, "Wallet credited");
+    }
+
+    [HttpGet("statement")]
+    public async Task<IActionResult> GetStatement(
+        [FromQuery] Guid walletId,
+        [FromQuery][Range(1, int.MaxValue)] int page = 1,
+        [FromQuery][Range(1, 100)] int pageSize = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var statement = await walletService.GetStatementAsync(walletId, page, pageSize, cancellationToken);
+        return Success(statement, "Statement retrieved");
+    }
+
+    [HttpGet("audit")]
+    public async Task<IActionResult> GetAuditTrail(
+        [FromQuery] Guid walletId,
+        [FromQuery][Range(1, int.MaxValue)] int page = 1,
+        [FromQuery][Range(1, 100)] int pageSize = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var audit = await walletService.GetAuditTrailAsync(walletId, page, pageSize, cancellationToken);
+        return Success(audit, "Audit trail retrieved");
     }
 }

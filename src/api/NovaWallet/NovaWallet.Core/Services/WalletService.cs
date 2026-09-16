@@ -11,6 +11,8 @@ namespace NovaWallet.Core.Services;
 public class WalletService(
     IWalletRepository walletRepository,
     IWalletQueries walletQueries,
+    IStatementQueries statementQueries,
+    IAuditQueries auditQueries,
     ILedgerTransactionRepository ledgerTransactionRepository,
     IAuditLogRepository auditLogRepository,
     IOutboxRepository outboxRepository,
@@ -128,4 +130,27 @@ public class WalletService(
 
             return new WalletResponse(wallet.WalletId, wallet.BalanceMinor, wallet.Currency);
         });
+
+    public async Task<PagedResult<StatementEntryResponse>> GetStatementAsync(Guid walletId, int page, int pageSize, CancellationToken cancellationToken)
+    {
+        await AuthorizeWalletAccessAsync(walletId, "view the statement for", cancellationToken);
+        return await statementQueries.GetStatementAsync(walletId, page, pageSize, cancellationToken);
+    }
+
+    public async Task<PagedResult<AuditEntryResponse>> GetAuditTrailAsync(Guid walletId, int page, int pageSize, CancellationToken cancellationToken)
+    {
+        await AuthorizeWalletAccessAsync(walletId, "view the audit trail for", cancellationToken);
+        return await auditQueries.GetAuditTrailAsync(walletId, page, pageSize, cancellationToken);
+    }
+
+    private async Task AuthorizeWalletAccessAsync(Guid walletId, string action, CancellationToken cancellationToken)
+    {
+        var balance = await walletQueries.GetBalanceAsync(walletId, cancellationToken)
+            ?? throw new WalletNotFoundException(walletId);
+
+        if (balance.CustomerId != callerContext.ActorId)
+        {
+            throw new ForbiddenException($"You may only {action} your own wallet.");
+        }
+    }
 }

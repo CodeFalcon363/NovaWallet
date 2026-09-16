@@ -50,7 +50,7 @@ namespace NovaWallet.Core.Data.Migrations
                 {
                     TransactionId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
                     WalletId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    Type = table.Column<int>(type: "int", nullable: false),
+                    Type = table.Column<string>(type: "nvarchar(20)", maxLength: 20, nullable: false),
                     AmountMinor = table.Column<long>(type: "bigint", nullable: false),
                     BalanceAfterMinor = table.Column<long>(type: "bigint", nullable: false),
                     CounterpartyWalletId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
@@ -85,7 +85,7 @@ namespace NovaWallet.Core.Data.Migrations
                 {
                     IdempotencyKey = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: false),
                     RequestFingerprint = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: false),
-                    Status = table.Column<int>(type: "int", nullable: false),
+                    Status = table.Column<string>(type: "nvarchar(20)", maxLength: 20, nullable: false),
                     ResultTransactionId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
                     CreatedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false),
                     CompletedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: true)

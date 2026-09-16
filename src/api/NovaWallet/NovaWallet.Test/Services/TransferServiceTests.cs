@@ -24,6 +24,8 @@ public class TransferServiceTests(SqlServerFixture fixture)
     {
         var walletRepository = new WalletRepository(context);
         var walletQueries = new WalletQueries(fixture.CreateConnectionFactory());
+        var statementQueries = new StatementQueries(fixture.CreateConnectionFactory());
+        var auditQueries = new AuditQueries(fixture.CreateConnectionFactory());
         var ledgerTransactionRepository = new LedgerTransactionRepository(context);
         var auditLogRepository = new AuditLogRepository(context);
         var outboxRepository = new OutboxRepository(context);
@@ -33,7 +35,7 @@ public class TransferServiceTests(SqlServerFixture fixture)
         var callerContext = new FakeCallerContext(callerCustomerId);
         var dailyLimitOptions = Options.Create(new DailyOutboundLimitOptions { LimitMinor = dailyLimitMinor });
 
-        var walletService = new WalletService(walletRepository, walletQueries, ledgerTransactionRepository, auditLogRepository, outboxRepository, unitOfWork, callerContext);
+        var walletService = new WalletService(walletRepository, walletQueries, statementQueries, auditQueries, ledgerTransactionRepository, auditLogRepository, outboxRepository, unitOfWork, callerContext);
         var transferService = new TransferService(
             walletRepository, ledgerTransactionRepository, auditLogRepository, outboxRepository,
             idempotencyRepository, dailyUsageRepository, unitOfWork, callerContext,

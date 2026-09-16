@@ -15,4 +15,8 @@
     <ProjectReference Include="..\NovaWallet.Core\NovaWallet.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
+  </ItemGroup>
+
 </Project>
