@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Options;
 using NovaWallet.Core.Data;
 using NovaWallet.Core.Exceptions;
 using NovaWallet.Core.Interfaces;
@@ -13,7 +14,13 @@ namespace NovaWallet.Test.Services;
 [Collection(SqlServerCollection.Name)]
 public class TransferServiceTests(SqlServerFixture fixture)
 {
-    private (WalletService Wallets, TransferService Transfers) CreateServices(NovaWalletDbContext context, string callerCustomerId)
+    public const long DefaultDailyLimitMinor = 50_000_000; // ₦500,000, matches the production default.
+
+    private (WalletService Wallets, TransferService Transfers) CreateServices(
+        NovaWalletDbContext context,
+        string callerCustomerId,
+        TimeProvider? timeProvider = null,
+        long dailyLimitMinor = DefaultDailyLimitMinor)
     {
         var walletRepository = new WalletRepository(context);
         var walletQueries = new WalletQueries(fixture.CreateConnectionFactory());
@@ -21,11 +28,16 @@ public class TransferServiceTests(SqlServerFixture fixture)
         var auditLogRepository = new AuditLogRepository(context);
         var outboxRepository = new OutboxRepository(context);
         var idempotencyRepository = new IdempotencyRepository(context);
+        var dailyUsageRepository = new DailyUsageRepository(context);
         var unitOfWork = new UnitOfWork(context);
         var callerContext = new FakeCallerContext(callerCustomerId);
+        var dailyLimitOptions = Options.Create(new DailyOutboundLimitOptions { LimitMinor = dailyLimitMinor });
 
         var walletService = new WalletService(walletRepository, walletQueries, ledgerTransactionRepository, auditLogRepository, outboxRepository, unitOfWork, callerContext);
-        var transferService = new TransferService(walletRepository, ledgerTransactionRepository, auditLogRepository, outboxRepository, idempotencyRepository, unitOfWork, callerContext);
+        var transferService = new TransferService(
+            walletRepository, ledgerTransactionRepository, auditLogRepository, outboxRepository,
+            idempotencyRepository, dailyUsageRepository, unitOfWork, callerContext,
+            timeProvider ?? TimeProvider.System, dailyLimitOptions);
 
         return (walletService, transferService);
     }
@@ -243,5 +255,120 @@ public class TransferServiceTests(SqlServerFixture fixture)
         // Money is conserved: nothing was created or destroyed by the concurrent contention.
         Assert.Equal(startingBalance, source.BalanceMinor + destination!.BalanceMinor);
         Assert.Equal(startingBalance - successCount * amountPerTransfer, source.BalanceMinor);
+    }
+
+    [Fact]
+    public async Task TransferAsync_At_Exactly_The_Daily_Limit_Succeeds()
+    {
+        var (sourceId, destinationId, customerId) = await CreateFundedPairAsync(1_000_000);
+
+        await using var context = fixture.CreateDbContext();
+        var (_, transfers) = CreateServices(context, customerId, dailyLimitMinor: 500_000);
+
+        var result = await transfers.TransferAsync(
+            Guid.NewGuid().ToString(),
+            new TransferRequest { SourceWalletId = sourceId, DestinationWalletId = destinationId, AmountMinor = 500_000 },
+            CancellationToken.None);
+
+        Assert.Equal(500_000, result.NewSourceBalanceMinor);
+    }
+
+    [Fact]
+    public async Task TransferAsync_One_Kobo_Over_Daily_Limit_Is_Rejected_And_Balance_Unchanged()
+    {
+        var (sourceId, destinationId, customerId) = await CreateFundedPairAsync(1_000_000);
+
+        await using var context = fixture.CreateDbContext();
+        var (_, transfers) = CreateServices(context, customerId, dailyLimitMinor: 500_000);
+
+        var exception = await Assert.ThrowsAsync<DailyLimitExceededException>(() =>
+            transfers.TransferAsync(
+                Guid.NewGuid().ToString(),
+                new TransferRequest { SourceWalletId = sourceId, DestinationWalletId = destinationId, AmountMinor = 500_001 },
+                CancellationToken.None));
+
+        Assert.Equal(422, exception.StatusCode);
+
+        await using var verifyContext = fixture.CreateDbContext();
+        var source = await verifyContext.Wallets.FindAsync(sourceId);
+        Assert.Equal(1_000_000, source!.BalanceMinor); // untouched — rejected before mutation
+    }
+
+    [Fact]
+    public async Task TransferAsync_Accumulates_Usage_Across_Multiple_Transfers_Same_Day()
+    {
+        var (sourceId, destinationId, customerId) = await CreateFundedPairAsync(1_000_000);
+
+        await using var context1 = fixture.CreateDbContext();
+        var (_, transfers1) = CreateServices(context1, customerId, dailyLimitMinor: 500_000);
+        await transfers1.TransferAsync(Guid.NewGuid().ToString(),
+            new TransferRequest { SourceWalletId = sourceId, DestinationWalletId = destinationId, AmountMinor = 300_000 },
+            CancellationToken.None);
+
+        // A second transfer that alone is within the limit, but combined with the first exceeds it.
+        await using var context2 = fixture.CreateDbContext();
+        var (_, transfers2) = CreateServices(context2, customerId, dailyLimitMinor: 500_000);
+
+        var exception = await Assert.ThrowsAsync<DailyLimitExceededException>(() =>
+            transfers2.TransferAsync(Guid.NewGuid().ToString(),
+                new TransferRequest { SourceWalletId = sourceId, DestinationWalletId = destinationId, AmountMinor = 300_000 },
+                CancellationToken.None));
+
+        Assert.Equal(422, exception.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreditAsync_Does_Not_Count_Against_Daily_Outbound_Limit()
+    {
+        var (sourceId, destinationId, customerId) = await CreateFundedPairAsync(500_000);
+
+        await using var context = fixture.CreateDbContext();
+        var (wallets, transfers) = CreateServices(context, customerId, dailyLimitMinor: 500_000);
+
+        // Credit well beyond the daily limit — this must not be constrained by it at all.
+        await wallets.CreditAsync(sourceId, new CreditWalletRequest { AmountMinor = 2_000_000 }, CancellationToken.None);
+
+        // Outbound transfer up to the full daily limit should still succeed.
+        var result = await transfers.TransferAsync(
+            Guid.NewGuid().ToString(),
+            new TransferRequest { SourceWalletId = sourceId, DestinationWalletId = destinationId, AmountMinor = 500_000 },
+            CancellationToken.None);
+
+        Assert.Equal(2_000_000, result.NewSourceBalanceMinor); // 500,000 + 2,000,000 - 500,000
+    }
+
+    [Fact]
+    public async Task TransferAsync_Usage_Resets_After_Wat_Midnight()
+    {
+        var (sourceId, destinationId, customerId) = await CreateFundedPairAsync(1_000_000);
+
+        // 23:30 UTC on day 1 is 00:30 WAT on day 2 (WAT = UTC+1) — start there so the first
+        // transfer lands on WAT-day-2, then cross into WAT-day-3.
+        var day2Wat = new ManualTimeProvider(new DateTimeOffset(2026, 1, 1, 23, 30, 0, TimeSpan.Zero));
+
+        await using var context1 = fixture.CreateDbContext();
+        var (_, transfers1) = CreateServices(context1, customerId, day2Wat, dailyLimitMinor: 500_000);
+        await transfers1.TransferAsync(Guid.NewGuid().ToString(),
+            new TransferRequest { SourceWalletId = sourceId, DestinationWalletId = destinationId, AmountMinor = 500_000 },
+            CancellationToken.None);
+
+        // Still WAT-day-2 — the limit for that day is now exhausted.
+        await using var context2 = fixture.CreateDbContext();
+        var (_, transfers2) = CreateServices(context2, customerId, day2Wat, dailyLimitMinor: 500_000);
+        await Assert.ThrowsAsync<DailyLimitExceededException>(() =>
+            transfers2.TransferAsync(Guid.NewGuid().ToString(),
+                new TransferRequest { SourceWalletId = sourceId, DestinationWalletId = destinationId, AmountMinor = 1 },
+                CancellationToken.None));
+
+        // Advance past WAT midnight into WAT-day-3 — the limit should have reset.
+        var day3Wat = new ManualTimeProvider(new DateTimeOffset(2026, 1, 2, 23, 30, 0, TimeSpan.Zero));
+        await using var context3 = fixture.CreateDbContext();
+        var (_, transfers3) = CreateServices(context3, customerId, day3Wat, dailyLimitMinor: 500_000);
+
+        var result = await transfers3.TransferAsync(Guid.NewGuid().ToString(),
+            new TransferRequest { SourceWalletId = sourceId, DestinationWalletId = destinationId, AmountMinor = 500_000 },
+            CancellationToken.None);
+
+        Assert.Equal(0, result.NewSourceBalanceMinor);
     }
 }

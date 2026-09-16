@@ -51,6 +51,9 @@ public static class ServiceExtension
 
     public static IServiceCollection AddNovaWalletApplicationServices(this IServiceCollection services)
     {
+        services.AddSingleton(TimeProvider.System);
+        services.AddOptions<DailyOutboundLimitOptions>().BindConfiguration(DailyOutboundLimitOptions.SectionName);
+
         services.AddScoped<WalletService>();
         services.AddScoped<TransferService>();
         services.AddHttpContextAccessor();

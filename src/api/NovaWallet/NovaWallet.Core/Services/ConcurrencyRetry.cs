@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using NovaWallet.Core.Data;
 using NovaWallet.Core.Interfaces;
 
 namespace NovaWallet.Core.Services;
@@ -21,7 +22,7 @@ public static class ConcurrencyRetry
             {
                 return await attempt();
             }
-            catch (DbUpdateConcurrencyException)
+            catch (Exception ex) when (IsRetryable(ex))
             {
                 unitOfWork.ResetTracking();
 
@@ -33,7 +34,18 @@ public static class ConcurrencyRetry
             }
         }
 
-        // Final attempt: let a concurrency exception propagate to the caller/API layer.
+        // Final attempt: let the exception propagate to the caller/API layer.
         return await attempt();
     }
+
+    private static bool IsRetryable(Exception ex) => ex switch
+    {
+        // A row this attempt tried to update was changed since it was read.
+        DbUpdateConcurrencyException => true,
+        // Two attempts racing to INSERT the first DailyOutboundUsage row for a wallet's day —
+        // a PK collision, not a RowVersion mismatch, but equally resolved by retrying with a
+        // fresh read (which will find the row and UPDATE it instead).
+        DbUpdateException dbEx => SqlExceptionClassifier.IsUniqueConstraintViolation(dbEx),
+        _ => false,
+    };
 }

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Options;
 using NovaWallet.Core.Entities;
 using NovaWallet.Core.Exceptions;
 using NovaWallet.Core.Interfaces;
@@ -12,8 +13,11 @@ public class TransferService(
     IAuditLogRepository auditLogRepository,
     IOutboxRepository outboxRepository,
     IIdempotencyRepository idempotencyRepository,
+    IDailyUsageRepository dailyUsageRepository,
     IUnitOfWork unitOfWork,
-    ICallerContext callerContext)
+    ICallerContext callerContext,
+    TimeProvider timeProvider,
+    IOptions<DailyOutboundLimitOptions> dailyLimitOptions)
 {
     private const int MaxIdempotencyPollAttempts = 60;
     private const int IdempotencyPollDelayMs = 250;
@@ -101,6 +105,16 @@ public class TransferService(
         {
             throw new InsufficientFundsException(source.WalletId);
         }
+
+        var usageDateWat = WatClock.TodayWat(timeProvider);
+        var dailyUsage = await dailyUsageRepository.GetOrCreateTrackedAsync(source.WalletId, usageDateWat, cancellationToken);
+
+        if (dailyUsage.OutboundTotalMinor + request.AmountMinor > dailyLimitOptions.Value.LimitMinor)
+        {
+            throw new DailyLimitExceededException(source.WalletId);
+        }
+
+        dailyUsage.OutboundTotalMinor += request.AmountMinor;
 
         var sourceBalanceBefore = source.BalanceMinor;
         var destinationBalanceBefore = destination.BalanceMinor;
