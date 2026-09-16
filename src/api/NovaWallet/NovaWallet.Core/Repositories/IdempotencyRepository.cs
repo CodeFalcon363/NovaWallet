@@ -7,8 +7,16 @@ namespace NovaWallet.Core.Repositories;
 
 public class IdempotencyRepository(NovaWalletDbContext context) : IIdempotencyRepository
 {
+    /// <summary>
+    /// Deliberately AsNoTracking + a direct query, not FindAsync: this is polled in a loop by
+    /// TransferService to observe a status change made by a DIFFERENT request. FindAsync would
+    /// return the same cached tracked instance from this context's identity map on every call
+    /// after the first, so the poller would never see the row transition out of Pending.
+    /// </summary>
     public Task<TransferIdempotencyRecord?> GetAsync(string idempotencyKey, CancellationToken cancellationToken) =>
-        context.TransferIdempotencyRecords.FindAsync([idempotencyKey], cancellationToken).AsTask();
+        context.TransferIdempotencyRecords
+            .AsNoTracking()
+            .FirstOrDefaultAsync(r => r.IdempotencyKey == idempotencyKey, cancellationToken);
 
     public async Task<bool> TryReserveAsync(string idempotencyKey, string requestFingerprint, CancellationToken cancellationToken)
     {

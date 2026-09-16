@@ -52,6 +52,7 @@ public static class ServiceExtension
     public static IServiceCollection AddNovaWalletApplicationServices(this IServiceCollection services)
     {
         services.AddScoped<WalletService>();
+        services.AddScoped<TransferService>();
         services.AddHttpContextAccessor();
         services.AddScoped<ICallerContext, HttpCallerContext>();
         services.AddScoped<DevTokenIssuer>();
