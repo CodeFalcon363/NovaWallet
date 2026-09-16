@@ -30,6 +30,4 @@
 /documentation/NovaWallet_Ledger_Service.pdf
 /documentation/SECRETS.env
 /documentation/CaseStudy.md
-/src/api/NovaWallet/NovaWallet.Core/Services/Mock**
-/src/api/NovaWallet/NovaWallet.Infrastructure/ExternalServices/Mock**
 /documentation/AI_USAGE.md

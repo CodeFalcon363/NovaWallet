@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.OpenApi.Models;
+using NovaWallet.Api.Extensions;
+using NovaWallet.Api.Middleware;
 using NovaWallet.Core.Data;
-using NovaWallet.Core.Interfaces;
 
 namespace NovaWallet.Api
 {
@@ -10,15 +12,36 @@ namespace NovaWallet.Api
         {
             var builder = WebApplication.CreateBuilder(args);
 
-            var connectionString = builder.Configuration.GetConnectionString("NovaWalletDb")
-                ?? throw new InvalidOperationException("Missing ConnectionStrings:NovaWalletDb configuration.");
+            builder.Services
+                .AddNovaWalletPersistence()
+                .AddNovaWalletRepositories()
+                .AddNovaWalletApplicationServices()
+                .AddNovaWalletJwtAuthentication();
 
-            builder.Services.AddDbContext<NovaWalletDbContext>(options => options.UseSqlServer(connectionString));
-            builder.Services.AddSingleton<ISqlConnectionFactory>(new SqlConnectionFactory(connectionString));
+            builder.Services.AddProblemDetails();
+            builder.Services.AddExceptionHandler<NovaWalletExceptionHandler>();
 
             builder.Services.AddControllers();
             builder.Services.AddEndpointsApiExplorer();
-            builder.Services.AddSwaggerGen();
+            builder.Services.AddSwaggerGen(options =>
+            {
+                options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+                {
+                    Name = "Authorization",
+                    Type = SecuritySchemeType.Http,
+                    Scheme = "Bearer",
+                    BearerFormat = "JWT",
+                    In = ParameterLocation.Header,
+                    Description = "JWT bearer token, e.g. from POST /auth/tokens",
+                });
+                options.AddSecurityRequirement(new OpenApiSecurityRequirement
+                {
+                    {
+                        new OpenApiSecurityScheme { Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" } },
+                        Array.Empty<string>()
+                    },
+                });
+            });
 
             var app = builder.Build();
 
@@ -27,14 +50,19 @@ namespace NovaWallet.Api
                 scope.ServiceProvider.GetRequiredService<NovaWalletDbContext>().Database.Migrate();
             }
 
-            if (app.Environment.IsDevelopment())
-            {
-                app.UseSwagger();
-                app.UseSwaggerUI();
-            }
+            app.UseExceptionHandler();
+
+            // Always reachable, not just in Development: the task brief requires the
+            // OpenAPI/Swagger spec to be reachable when the service is running, and
+            // docker-compose does not set ASPNETCORE_ENVIRONMENT=Development.
+            app.UseSwagger();
+            app.UseSwaggerUI();
 
             app.UseHttpsRedirection();
 
+            app.UseMiddleware<RequestResponseLoggingMiddleware>();
+
+            app.UseAuthentication();
             app.UseAuthorization();
 
             app.MapControllers();

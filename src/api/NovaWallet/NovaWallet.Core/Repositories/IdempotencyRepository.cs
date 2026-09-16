@@ -1,4 +1,3 @@
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using NovaWallet.Core.Data;
 using NovaWallet.Core.Entities;
@@ -8,9 +7,6 @@ namespace NovaWallet.Core.Repositories;
 
 public class IdempotencyRepository(NovaWalletDbContext context) : IIdempotencyRepository
 {
-    private const int SqlUniqueConstraintViolation = 2627;
-    private const int SqlDuplicateKeyViolation = 2601;
-
     public Task<TransferIdempotencyRecord?> GetAsync(string idempotencyKey, CancellationToken cancellationToken) =>
         context.TransferIdempotencyRecords.FindAsync([idempotencyKey], cancellationToken).AsTask();
 
@@ -34,7 +30,7 @@ public class IdempotencyRepository(NovaWalletDbContext context) : IIdempotencyRe
             await context.SaveChangesAsync(cancellationToken);
             return true;
         }
-        catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+        catch (DbUpdateException ex) when (SqlExceptionClassifier.IsUniqueConstraintViolation(ex))
         {
             context.Entry(record).State = EntityState.Detached;
             return false;
@@ -59,8 +55,4 @@ public class IdempotencyRepository(NovaWalletDbContext context) : IIdempotencyRe
         record.Status = IdempotencyStatus.Failed;
         record.CompletedAtUtc = DateTime.UtcNow;
     }
-
-    private static bool IsUniqueConstraintViolation(DbUpdateException ex) =>
-        ex.InnerException is SqlException sqlEx &&
-        (sqlEx.Number == SqlUniqueConstraintViolation || sqlEx.Number == SqlDuplicateKeyViolation);
 }
