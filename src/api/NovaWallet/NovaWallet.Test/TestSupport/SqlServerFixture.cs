@@ -54,7 +54,7 @@ public class SqlServerFixture : IAsyncLifetime
 }
 
 [CollectionDefinition(Name)]
-public class SqlServerCollection : ICollectionFixture<SqlServerFixture>
+public class SqlServerCollection : ICollectionFixture<SqlServerFixture>, ICollectionFixture<RedisFixture>
 {
     public const string Name = "SqlServer";
 }

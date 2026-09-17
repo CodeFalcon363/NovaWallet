@@ -5,9 +5,9 @@ using Xunit;
 namespace NovaWallet.Test.Controllers;
 
 [Collection(SqlServerCollection.Name)]
-public class HealthCheckTests(SqlServerFixture fixture) : IDisposable
+public class HealthCheckTests(SqlServerFixture sqlFixture, RedisFixture redisFixture) : IDisposable
 {
-    private readonly NovaWalletApiFactory _factory = new(fixture.ConnectionString);
+    private readonly NovaWalletApiFactory _factory = new(sqlFixture.ConnectionString, redisFixture.ConnectionString);
 
     public void Dispose() => _factory.Dispose();
 
@@ -27,8 +27,9 @@ public class HealthCheckTests(SqlServerFixture fixture) : IDisposable
         var client = _factory.CreateClient();
 
         // RabbitMQ is not running in this test environment, so readiness as a whole may report
-        // unhealthy — what this test actually verifies is that the endpoint executes the real
-        // SQL Server check against the test database without auth and without throwing.
+        // unhealthy even though SQL Server and Redis (both real, via fixtures) are reachable —
+        // what this test actually verifies is that the endpoint executes the real checks without
+        // auth and without throwing.
         var response = await client.GetAsync("/health/ready");
 
         Assert.True(response.StatusCode is HttpStatusCode.OK or HttpStatusCode.ServiceUnavailable);

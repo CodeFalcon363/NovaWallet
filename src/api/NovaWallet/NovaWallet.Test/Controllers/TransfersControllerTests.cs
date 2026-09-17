@@ -13,12 +13,16 @@ namespace NovaWallet.Test.Controllers;
 [Collection(SqlServerCollection.Name)]
 public class TransfersControllerTests : IDisposable
 {
+    private readonly SqlServerFixture _sqlFixture;
+    private readonly RedisFixture _redisFixture;
     private readonly NovaWalletApiFactory _factory;
     private readonly HttpClient _client;
 
-    public TransfersControllerTests(SqlServerFixture fixture)
+    public TransfersControllerTests(SqlServerFixture sqlFixture, RedisFixture redisFixture)
     {
-        _factory = new NovaWalletApiFactory(fixture.ConnectionString);
+        _sqlFixture = sqlFixture;
+        _redisFixture = redisFixture;
+        _factory = new NovaWalletApiFactory(sqlFixture.ConnectionString, redisFixture.ConnectionString);
         _client = _factory.CreateClient();
     }
 
@@ -178,13 +182,40 @@ public class TransfersControllerTests : IDisposable
     [Fact]
     public async Task Transfer_Exceeding_Rate_Limit_Returns_429_ProblemDetails()
     {
-        var customerId = $"cust-{Guid.NewGuid():N}";
-        var sourceId = await CreateWalletAsync(customerId);
-        await CreditAsync(sourceId, 1_000_000);
-        var destinationId = await CreateWalletAsync($"cust-{Guid.NewGuid():N}");
-        await AuthenticateAsync(customerId);
+        // The rate limiter is deliberately global (one Redis-backed counter across all
+        // instances/callers, see AddNovaWalletRateLimiting) — sharing the class-level _client
+        // would mean this 30-request burst pollutes the counter every other test in this class
+        // relies on staying under the limit. Isolate it on its own Redis logical database
+        // instead of a separate container, so it still exercises the real distributed limiter.
+        var isolatedRedisConnectionString = $"{_redisFixture.ConnectionString},defaultDatabase=1";
+        await using var isolatedFactory = new NovaWalletApiFactory(_sqlFixture.ConnectionString, isolatedRedisConnectionString);
+        using var isolatedClient = isolatedFactory.CreateClient();
 
-        // The fixed-window limiter permits 20 requests / 10s; send more than that in a burst.
+        async Task<string> IssueTokenAsync(string forCustomerId)
+        {
+            var tokenResponse = await isolatedClient.PostAsJsonAsync("/auth/tokens", new { customerId = forCustomerId });
+            var tokenBody = await tokenResponse.Content.ReadFromJsonAsync<ApiResponse<TokenResponse>>();
+            return tokenBody!.Data.AccessToken;
+        }
+
+        async Task<Guid> CreateWalletAsIsolatedAsync(string forCustomerId)
+        {
+            isolatedClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", await IssueTokenAsync(forCustomerId));
+            var walletResponse = await isolatedClient.PostAsJsonAsync("/wallets", new { customerId = forCustomerId });
+            var walletBody = await walletResponse.Content.ReadFromJsonAsync<ApiResponse<WalletResponse>>();
+            return walletBody!.Data.WalletId;
+        }
+
+        var customerId = $"cust-{Guid.NewGuid():N}";
+        var sourceId = await CreateWalletAsIsolatedAsync(customerId);
+        isolatedClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", await IssueTokenAsync(customerId));
+        await isolatedClient.PostAsJsonAsync($"/wallets/credit?walletId={sourceId}", new { amountMinor = 1_000_000 });
+
+        var destinationId = await CreateWalletAsIsolatedAsync($"cust-{Guid.NewGuid():N}");
+        // Re-authenticate as the source owner for the transfer burst below.
+        isolatedClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", await IssueTokenAsync(customerId));
+
+        // The sliding-window limiter permits 20 requests / 10s; send more than that in a burst.
         var responses = await Task.WhenAll(Enumerable.Range(0, 30).Select(_ =>
         {
             var req = new HttpRequestMessage(HttpMethod.Post, "/transfers")
@@ -192,7 +223,7 @@ public class TransfersControllerTests : IDisposable
                 Content = JsonContent.Create(new { sourceWalletId = sourceId, destinationWalletId = destinationId, amountMinor = 1 }),
             };
             req.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
-            return _client.SendAsync(req);
+            return isolatedClient.SendAsync(req);
         }));
 
         Assert.Contains(responses, r => r.StatusCode == (HttpStatusCode)429);

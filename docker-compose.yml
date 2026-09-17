@@ -26,6 +26,16 @@ services:
       timeout: 5s
       retries: 20
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   api:
     build:
       context: src/api/NovaWallet
@@ -38,8 +48,11 @@ services:
       RabbitMq__HostName: "rabbitmq"
       RabbitMq__UserName: "novawallet"
       RabbitMq__Password: "NovaWallet_Dev_Pw1!"
+      Redis__ConnectionString: "redis:6379"
     depends_on:
       sqlserver:
         condition: service_healthy
       rabbitmq:
+        condition: service_healthy
+      redis:
         condition: service_healthy

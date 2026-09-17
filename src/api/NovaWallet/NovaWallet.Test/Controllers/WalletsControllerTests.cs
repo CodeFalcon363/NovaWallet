@@ -16,9 +16,9 @@ public class WalletsControllerTests : IDisposable
     private readonly NovaWalletApiFactory _factory;
     private readonly HttpClient _client;
 
-    public WalletsControllerTests(SqlServerFixture fixture)
+    public WalletsControllerTests(SqlServerFixture sqlFixture, RedisFixture redisFixture)
     {
-        _factory = new NovaWalletApiFactory(fixture.ConnectionString);
+        _factory = new NovaWalletApiFactory(sqlFixture.ConnectionString, redisFixture.ConnectionString);
         _client = _factory.CreateClient();
     }
 

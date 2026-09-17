@@ -1,5 +1,4 @@
 using System.Text;
-using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -15,6 +14,8 @@ using NovaWallet.Core.Queries;
 using NovaWallet.Core.Repositories;
 using NovaWallet.Core.Services;
 using NovaWallet.Infrastructure.ExternalServices;
+using RedisRateLimiting;
+using StackExchange.Redis;
 
 namespace NovaWallet.Api.Extensions;
 
@@ -119,16 +120,40 @@ public static class ServiceExtension
         return services;
     }
 
-    /// <summary>Rate limiting on the transfer endpoint (checklist item; NFR-SEC-7).</summary>
+    /// <summary>
+    /// Rate limiting on the transfer endpoint (checklist item; NFR-SEC-7) — backed by Redis, not
+    /// ASP.NET Core's in-memory limiter. An in-memory limiter counts requests per *process*: with
+    /// N horizontally-scaled instances behind a load balancer, the effective global limit becomes
+    /// N × the configured limit, not the configured limit, because each instance keeps its own
+    /// independent counter. A shared Redis-backed limiter (via the RedisRateLimiting library — a
+    /// sliding-window Lua script under the hood, not hand-rolled here) enforces one true global
+    /// count across every instance. Sliding window specifically (not fixed window) also closes
+    /// the boundary-burst gap: a fixed window resets abruptly, so a client can send the full
+    /// permit count in the last moment of one window and again in the first moment of the next,
+    /// briefly doubling the intended rate.
+    /// </summary>
     public static IServiceCollection AddNovaWalletRateLimiting(this IServiceCollection services)
     {
+        services.AddOptions<RedisOptions>().BindConfiguration(RedisOptions.SectionName);
+
+        services.AddSingleton<IConnectionMultiplexer>(sp =>
+            ConnectionMultiplexer.Connect(sp.GetRequiredService<IOptions<RedisOptions>>().Value.ConnectionString));
+
         services.AddRateLimiter(options =>
         {
-            options.AddFixedWindowLimiter(RateLimiterPolicies.Transfer, limiterOptions =>
+            options.AddPolicy(RateLimiterPolicies.Transfer, httpContext =>
             {
-                limiterOptions.PermitLimit = 20;
-                limiterOptions.Window = TimeSpan.FromSeconds(10);
-                limiterOptions.QueueLimit = 0;
+                var connectionMultiplexer = httpContext.RequestServices.GetRequiredService<IConnectionMultiplexer>();
+
+                // One shared partition key ("global"), not per-caller: the limit is on the
+                // endpoint as a whole, matching the brief's "rate-limiting middleware on the
+                // transfer endpoint" — not a per-user quota.
+                return RedisRateLimitPartition.GetSlidingWindowRateLimiter("global", _ => new RedisSlidingWindowRateLimiterOptions
+                {
+                    ConnectionMultiplexerFactory = () => connectionMultiplexer,
+                    PermitLimit = 20,
+                    Window = TimeSpan.FromSeconds(10),
+                });
             });
 
             // RFC 7807 even on rate-limit rejection, consistent with every other error response.
@@ -153,7 +178,8 @@ public static class ServiceExtension
     {
         services.AddHealthChecks()
             .AddCheck<SqlServerHealthCheck>("sqlserver", tags: ["ready"])
-            .AddCheck<RabbitMqHealthCheck>("rabbitmq", tags: ["ready"]);
+            .AddCheck<RabbitMqHealthCheck>("rabbitmq", tags: ["ready"])
+            .AddCheck<RedisHealthCheck>("redis", tags: ["ready"]);
 
         return services;
     }
