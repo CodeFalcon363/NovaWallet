@@ -1,5 +1,8 @@
 using System.Text;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -107,6 +110,35 @@ public static class ServiceExtension
         services.AddSingleton<IEventPublisher, RabbitMqPublisher>();
         services.AddScoped<OutboxDispatcherService>();
         services.AddHostedService<OutboxBackgroundService>();
+        return services;
+    }
+
+    /// <summary>Rate limiting on the transfer endpoint (checklist item; NFR-SEC-7).</summary>
+    public static IServiceCollection AddNovaWalletRateLimiting(this IServiceCollection services)
+    {
+        services.AddRateLimiter(options =>
+        {
+            options.AddFixedWindowLimiter(RateLimiterPolicies.Transfer, limiterOptions =>
+            {
+                limiterOptions.PermitLimit = 20;
+                limiterOptions.Window = TimeSpan.FromSeconds(10);
+                limiterOptions.QueueLimit = 0;
+            });
+
+            // RFC 7807 even on rate-limit rejection, consistent with every other error response.
+            options.OnRejected = async (context, cancellationToken) =>
+            {
+                context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                context.HttpContext.Response.ContentType = "application/problem+json";
+                var problem = new ProblemDetails
+                {
+                    Status = StatusCodes.Status429TooManyRequests,
+                    Title = "Too many transfer requests. Please retry shortly.",
+                };
+                await context.HttpContext.Response.WriteAsJsonAsync(problem, cancellationToken);
+            };
+        });
+
         return services;
     }
 }

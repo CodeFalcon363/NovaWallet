@@ -23,6 +23,14 @@ public class NovaWalletExceptionHandler(IProblemDetailsService problemDetailsSer
 
         httpContext.Response.StatusCode = statusCode;
 
+        // The exception-handling middleware clears the response (including headers already set
+        // earlier in the pipeline) before invoking this handler, so the correlation ID has to be
+        // re-applied here — error responses are exactly when it matters most (NFR-OBS-2).
+        if (httpContext.Items[CorrelationIdMiddleware.ItemsKey] is string correlationId)
+        {
+            httpContext.Response.Headers[CorrelationIdMiddleware.HeaderName] = correlationId;
+        }
+
         return await problemDetailsService.TryWriteAsync(new ProblemDetailsContext
         {
             HttpContext = httpContext,

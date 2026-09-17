@@ -1,4 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
+using NovaWallet.Api.Middleware;
 using NovaWallet.Core.Interfaces;
 
 namespace NovaWallet.Api.Security;
@@ -10,6 +11,9 @@ public class HttpCallerContext(IHttpContextAccessor httpContextAccessor) : ICall
 
     public string ActorId =>
         httpContextAccessor.HttpContext?.User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value ?? UnknownActor;
+
+    public string CorrelationId =>
+        httpContextAccessor.HttpContext?.Items[CorrelationIdMiddleware.ItemsKey] as string ?? Guid.NewGuid().ToString();
 
     public string IpAddress
     {

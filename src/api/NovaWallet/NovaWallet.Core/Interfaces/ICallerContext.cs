@@ -9,4 +9,7 @@ public interface ICallerContext
     string ActorId { get; }
 
     string IpAddress { get; }
+
+    /// <summary>Propagated across the request (NFR-OBS-2) — attached to logs, audit entries, and outbox events.</summary>
+    string CorrelationId { get; }
 }

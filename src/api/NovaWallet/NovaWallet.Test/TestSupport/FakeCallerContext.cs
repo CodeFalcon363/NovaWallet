@@ -6,4 +6,5 @@ public class FakeCallerContext(string actorId, string ipAddress = "127.0.0.1") :
 {
     public string ActorId { get; } = actorId;
     public string IpAddress { get; } = ipAddress;
+    public string CorrelationId { get; } = Guid.NewGuid().ToString();
 }

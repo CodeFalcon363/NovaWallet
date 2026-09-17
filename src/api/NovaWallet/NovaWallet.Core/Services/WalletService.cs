@@ -46,6 +46,7 @@ public class WalletService(
             IpAddress = callerContext.IpAddress,
             BalanceBeforeMinor = null,
             BalanceAfterMinor = 0,
+            CorrelationId = callerContext.CorrelationId,
             CreatedAtUtc = DateTime.UtcNow,
         });
 
@@ -54,6 +55,7 @@ public class WalletService(
             OutboxMessageId = Guid.NewGuid(),
             Type = OutboxEventTypes.WalletCreated,
             PayloadJson = JsonSerializer.Serialize(new { wallet.WalletId, wallet.CustomerId }),
+            CorrelationId = callerContext.CorrelationId,
             CreatedAtUtc = DateTime.UtcNow,
         });
 
@@ -115,6 +117,7 @@ public class WalletService(
                 IpAddress = callerContext.IpAddress,
                 BalanceBeforeMinor = balanceBefore,
                 BalanceAfterMinor = wallet.BalanceMinor,
+                CorrelationId = callerContext.CorrelationId,
                 CreatedAtUtc = DateTime.UtcNow,
             });
 
@@ -123,6 +126,7 @@ public class WalletService(
                 OutboxMessageId = Guid.NewGuid(),
                 Type = OutboxEventTypes.WalletCredited,
                 PayloadJson = JsonSerializer.Serialize(new { wallet.WalletId, request.AmountMinor, NewBalanceMinor = wallet.BalanceMinor }),
+                CorrelationId = callerContext.CorrelationId,
                 CreatedAtUtc = DateTime.UtcNow,
             });
 

@@ -134,4 +134,71 @@ public class TransfersControllerTests : IDisposable
         Assert.Equal(firstBody!.Data.TransferId, secondBody!.Data.TransferId);
         Assert.Equal(firstBody.Data.NewSourceBalanceMinor, secondBody.Data.NewSourceBalanceMinor);
     }
+
+    [Fact]
+    public async Task Transfer_Response_Includes_Correlation_Id_Header()
+    {
+        var customerId = $"cust-{Guid.NewGuid():N}";
+        var sourceId = await CreateWalletAsync(customerId);
+        await CreditAsync(sourceId, 1_000);
+        var destinationId = await CreateWalletAsync($"cust-{Guid.NewGuid():N}");
+        await AuthenticateAsync(customerId);
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/transfers")
+        {
+            Content = JsonContent.Create(new { sourceWalletId = sourceId, destinationWalletId = destinationId, amountMinor = 1 }),
+        };
+        request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+
+        var response = await _client.SendAsync(request);
+
+        Assert.True(response.Headers.Contains("X-Correlation-Id"));
+    }
+
+    [Fact]
+    public async Task Transfer_Error_Response_Still_Includes_Correlation_Id_Header()
+    {
+        var customerId = $"cust-{Guid.NewGuid():N}";
+        var sourceId = await CreateWalletAsync(customerId); // never credited — insufficient funds
+        var destinationId = await CreateWalletAsync($"cust-{Guid.NewGuid():N}");
+        await AuthenticateAsync(customerId);
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/transfers")
+        {
+            Content = JsonContent.Create(new { sourceWalletId = sourceId, destinationWalletId = destinationId, amountMinor = 1 }),
+        };
+        request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal((HttpStatusCode)422, response.StatusCode);
+        Assert.True(response.Headers.Contains("X-Correlation-Id"));
+    }
+
+    [Fact]
+    public async Task Transfer_Exceeding_Rate_Limit_Returns_429_ProblemDetails()
+    {
+        var customerId = $"cust-{Guid.NewGuid():N}";
+        var sourceId = await CreateWalletAsync(customerId);
+        await CreditAsync(sourceId, 1_000_000);
+        var destinationId = await CreateWalletAsync($"cust-{Guid.NewGuid():N}");
+        await AuthenticateAsync(customerId);
+
+        // The fixed-window limiter permits 20 requests / 10s; send more than that in a burst.
+        var responses = await Task.WhenAll(Enumerable.Range(0, 30).Select(_ =>
+        {
+            var req = new HttpRequestMessage(HttpMethod.Post, "/transfers")
+            {
+                Content = JsonContent.Create(new { sourceWalletId = sourceId, destinationWalletId = destinationId, amountMinor = 1 }),
+            };
+            req.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+            return _client.SendAsync(req);
+        }));
+
+        Assert.Contains(responses, r => r.StatusCode == (HttpStatusCode)429);
+
+        var throttled = responses.First(r => r.StatusCode == (HttpStatusCode)429);
+        var problem = await throttled.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.Equal(429, problem!.Status);
+    }
 }

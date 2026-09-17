@@ -156,6 +156,7 @@ public class TransferService(
             IpAddress = callerContext.IpAddress,
             BalanceBeforeMinor = sourceBalanceBefore,
             BalanceAfterMinor = source.BalanceMinor,
+            CorrelationId = callerContext.CorrelationId,
             CreatedAtUtc = now,
         });
 
@@ -168,6 +169,7 @@ public class TransferService(
             IpAddress = callerContext.IpAddress,
             BalanceBeforeMinor = destinationBalanceBefore,
             BalanceAfterMinor = destination.BalanceMinor,
+            CorrelationId = callerContext.CorrelationId,
             CreatedAtUtc = now,
         });
 
@@ -182,6 +184,7 @@ public class TransferService(
                 DestinationWalletId = destination.WalletId,
                 request.AmountMinor,
             }),
+            CorrelationId = callerContext.CorrelationId,
             CreatedAtUtc = now,
         });
 
