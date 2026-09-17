@@ -1,0 +1,318 @@
+{
+  "info": {
+    "name": "NovaWallet Ledger Service",
+    "description": "Covers every endpoint. Run top-to-bottom (or via Collection Runner) — each request's test script chains variables (accessToken, sourceWalletId, destinationWalletId) into the next.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "customerId", "value": "alice-{{$randomUUID}}" },
+    { "key": "otherCustomerId", "value": "bob-{{$randomUUID}}" },
+    { "key": "accessToken", "value": "" },
+    { "key": "sourceWalletId", "value": "" },
+    { "key": "destinationWalletId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Issue Token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"customerId\": \"{{customerId}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/tokens", "host": ["{{baseUrl}}"], "path": ["auth", "tokens"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('accessToken', body.data.accessToken);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Wallets",
+      "item": [
+        {
+          "name": "Create Wallet (source)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"customerId\": \"{{customerId}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/wallets", "host": ["{{baseUrl}}"], "path": ["wallets"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('balance is zero', () => pm.expect(body.data.balanceMinor).to.eql(0));",
+                  "pm.collectionVariables.set('sourceWalletId', body.data.walletId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Balance (source)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/wallets?walletId={{sourceWalletId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["wallets"],
+              "query": [{ "key": "walletId", "value": "{{sourceWalletId}}" }]
+            }
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"] } }
+          ]
+        },
+        {
+          "name": "Credit Wallet (source)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"amountMinor\": 1000000\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/wallets/credit?walletId={{sourceWalletId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["wallets", "credit"],
+              "query": [{ "key": "walletId", "value": "{{sourceWalletId}}" }]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('balance credited', () => pm.expect(body.data.balanceMinor).to.eql(1000000));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Wallet (destination, different customer)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"customerId\": \"{{otherCustomerId}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/wallets", "host": ["{{baseUrl}}"], "path": ["wallets"] },
+            "description": "Note: this needs a token issued for {{otherCustomerId}}, since a caller may only create a wallet for themselves. Run 'Issue Token' again with customerId={{otherCustomerId}} first, or set accessToken manually, before this request."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Issue a fresh token for the destination customer inline, so this collection",
+                  "// runs end-to-end without manual steps.",
+                  "pm.sendRequest({",
+                  "  url: pm.collectionVariables.get('baseUrl') + '/auth/tokens',",
+                  "  method: 'POST',",
+                  "  header: { 'Content-Type': 'application/json' },",
+                  "  body: { mode: 'raw', raw: JSON.stringify({ customerId: pm.collectionVariables.get('otherCustomerId') }) }",
+                  "}, (err, res) => {",
+                  "  if (!err) { pm.collectionVariables.set('accessToken', res.json().data.accessToken); }",
+                  "});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('destinationWalletId', body.data.walletId);",
+                  "// Switch back to the source customer's token for subsequent requests.",
+                  "pm.sendRequest({",
+                  "  url: pm.collectionVariables.get('baseUrl') + '/auth/tokens',",
+                  "  method: 'POST',",
+                  "  header: { 'Content-Type': 'application/json' },",
+                  "  body: { mode: 'raw', raw: JSON.stringify({ customerId: pm.collectionVariables.get('customerId') }) }",
+                  "}, (err, res) => {",
+                  "  if (!err) { pm.collectionVariables.set('accessToken', res.json().data.accessToken); }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Statement (source)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/wallets/statement?walletId={{sourceWalletId}}&page=1&pageSize=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["wallets", "statement"],
+              "query": [
+                { "key": "walletId", "value": "{{sourceWalletId}}" },
+                { "key": "page", "value": "1" },
+                { "key": "pageSize", "value": "20" }
+              ]
+            }
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"] } }
+          ]
+        },
+        {
+          "name": "Get Audit Trail (source)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/wallets/audit?walletId={{sourceWalletId}}&page=1&pageSize=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["wallets", "audit"],
+              "query": [
+                { "key": "walletId", "value": "{{sourceWalletId}}" },
+                { "key": "page", "value": "1" },
+                { "key": "pageSize", "value": "20" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('entries include actor and IP', () => {",
+                  "  pm.expect(body.data.items[0]).to.have.property('actorId');",
+                  "  pm.expect(body.data.items[0]).to.have.property('ipAddress');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Transfers",
+      "item": [
+        {
+          "name": "Transfer (source -> destination)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Idempotency-Key", "value": "{{$randomUUID}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sourceWalletId\": \"{{sourceWalletId}}\",\n  \"destinationWalletId\": \"{{destinationWalletId}}\",\n  \"amountMinor\": 25000\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/transfers", "host": ["{{baseUrl}}"], "path": ["transfers"] },
+            "description": "Idempotency-Key is required (400 if missing). Replaying this exact request with the same key returns the same result without double-processing; the same key with a different body is rejected (409)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('balance debited', () => pm.expect(body.data.newSourceBalanceMinor).to.eql(975000));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Transfer without Idempotency-Key (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sourceWalletId\": \"{{sourceWalletId}}\",\n  \"destinationWalletId\": \"{{destinationWalletId}}\",\n  \"amountMinor\": 1\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/transfers", "host": ["{{baseUrl}}"], "path": ["transfers"] }
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('status 400 (missing Idempotency-Key)', () => pm.response.to.have.status(400));"] } }
+          ]
+        },
+        {
+          "name": "Transfer with excessive amount (expect 422 insufficient funds)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Idempotency-Key", "value": "{{$randomUUID}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sourceWalletId\": \"{{sourceWalletId}}\",\n  \"destinationWalletId\": \"{{destinationWalletId}}\",\n  \"amountMinor\": 999999999999\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/transfers", "host": ["{{baseUrl}}"], "path": ["transfers"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 422 (Problem Details)', () => pm.response.to.have.status(422));",
+                  "pm.test('RFC 7807 shape', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.have.property('status', 422);",
+                  "  pm.expect(body).to.have.property('title');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Liveness",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] } },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"] } }]
+        },
+        {
+          "name": "Readiness",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/health/ready", "host": ["{{baseUrl}}"], "path": ["health", "ready"] } }
+        }
+      ]
+    }
+  ]
+}
