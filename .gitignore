@@ -1,0 +1,30 @@
+#############################
+# Solution-wide build output
+#############################
+/src/api/**/**/bin/
+/src/api/**/**/obj/
+/src/api/packages/
+.vs/
+/src/api/NovaWallet/NovaWallet.Test/TestSupport/TestUsers.json
+
+#############################
+# Agent instruction docs (not part of the deliverable)
+#############################
+/documentation/Security.MD
+/documentation/Security.md
+/documentation/Implementation-Plan.md
+/documentation/CheckList.xlsx
+
+#############################
+# Carried-over reference code (compile-excluded, not committed)
+#############################
+
+
+#############################
+# Local editor config (not part of the deliverable)
+#############################
+/.editorconfig
+/documentation/NovaWallet_Ledger_Service.pdf
+/documentation/SECRETS.env
+/documentation/CaseStudy.md
+/documentation/AI_USAGE.md
