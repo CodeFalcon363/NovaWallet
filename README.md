@@ -120,6 +120,7 @@ just the final state.
 #### Money & data model
 
 **Integer kobo (`long`) everywhere, never `float`/`double`.**
+
 - *Reason:* the brief's hard constraint — floating-point representation error compounding across
   many transactions is exactly the class of bug a ledger cannot tolerate.
 - *Alternative:* `decimal` (.NET's base-10 fixed-point type) would also avoid binary
@@ -131,6 +132,7 @@ just the final state.
 
 **One wallet per customer**, enforced by a unique index on `Wallet.CustomerId` (409 on a second
 `POST /wallets`).
+
 - *Reason:* matches the brief's phrasing ("create a wallet for a customer id") and this session's
   explicit direction; avoids the extra "which wallet?" resolution every endpoint would otherwise
   need.
@@ -142,6 +144,7 @@ just the final state.
   requirement would be speculative.
 
 **Three-project layering, one dependency direction** (`Api`/`Infrastructure` → `Core` → nothing).
+
 - *Reason:* explicit direction this session — `.Core` must never reference another project, so
   domain logic stays testable and hosting-framework-free.
 - *Alternative:* a single project, or a four-layer split (e.g. a separate `Domain` below `Core`).
@@ -153,6 +156,7 @@ just the final state.
 #### Persistence & query strategy
 
 **SQL Server**, not PostgreSQL/MySQL/SQLite.
+
 - *Reason:* explicit direction this session.
 - *Alternative:* PostgreSQL was the natural runner-up — free, and `SELECT ... FOR UPDATE` /
   `SERIALIZABLE` are at least as capable as SQL Server's equivalents for this workload.
@@ -164,6 +168,7 @@ just the final state.
   avoid getting wrong.
 
 **CQRS-lite: EF Core for writes, Dapper for reads.**
+
 - *Reason:* explicit direction this session — matches the scaffold's pre-existing
   `Repositories/` (EF) vs `Queries/` (Dapper) folders.
 - *Alternative:* EF Core for everything (simpler — one query technology to know), or a genuinely
@@ -175,6 +180,7 @@ just the final state.
   paginated, indexed queries," not "a different database."
 
 **Repository pattern**, not a generic `IRepository<T>`.
+
 - *Reason:* explicit direction this session (Repository pattern), refined during implementation
   to per-aggregate interfaces (`IWalletRepository`, `IIdempotencyRepository`, …) instead of one
   generic type.
@@ -192,6 +198,7 @@ just the final state.
 
 **Optimistic concurrency (RowVersion + retry), not pessimistic row locking, for wallet balance
 updates.**
+
 - *Reason:* explicit direction this session, with a concrete rationale: wallets are tied to
   individual phones, so two genuinely simultaneous debits on the *same* wallet are rare in
   production — paying a per-transfer locking cost for contention that mostly doesn't happen
@@ -209,6 +216,7 @@ updates.**
 
 **Idempotency is reserve-then-complete via a database unique constraint, not a distributed lock
 or a cache.**
+
 - *Reason:* `Idempotency-Key` becomes the primary key of `TransferIdempotencyRecord`; a second
   concurrent `INSERT` with the same key fails atomically at the database rather than relying on
   an application-level check-then-write (which has the textbook race: two concurrent retries can
@@ -232,6 +240,7 @@ or a cache.**
   `AI_USAGE.md` for the full trace of how this was found.
 
 **Idempotency keys expire after a configurable TTL (`IdempotencyKeyTtl:Hours`, default 24).**
+
 - *Reason:* bounds `TransferIdempotencyRecord` storage growth and — more importantly — bounds how
   long a `Failed` or `Completed` key blocks reuse with a different payload. Without a TTL, a typo'd
   request that failed permanently would tie up its idempotency key forever.
@@ -252,6 +261,7 @@ or a cache.**
 #### Daily limit & time handling
 
 **`DailyOutboundUsage` is an incrementally-maintained counter, not a per-transfer `SUM()`.**
+
 - *Reason:* updated in the same transaction as the transfer debit, avoiding an aggregate query
   over the whole day's transactions on every single transfer.
 - *Alternative:* `SUM(AmountMinor) WHERE WalletId = ... AND CreatedAtUtc >= today` computed fresh
@@ -263,6 +273,7 @@ or a cache.**
   retry — so this doesn't need separate handling.
 
 **WAT is a fixed UTC+1 offset, not an IANA timezone lookup (`Africa/Lagos`).**
+
 - *Reason:* Nigeria has never observed daylight saving time, so "midnight WAT" is always exactly
   "23:00 UTC the day before" — a fixed offset is correct with zero ambiguity.
 - *Alternative:* `TimeZoneInfo.FindSystemTimeZoneById("Africa/Lagos")`, which would keep working
@@ -275,6 +286,7 @@ or a cache.**
 #### Eventing
 
 **Outbox pattern + RabbitMQ, not a direct publish from the request path.**
+
 - *Reason:* every balance mutation writes a domain event to an `OutboxMessage` row in the *same*
   database transaction as the mutation, so the event can never be "lost" relative to the DB state
   even if the broker is briefly unreachable — a `BackgroundService` polls and publishes
@@ -291,6 +303,7 @@ or a cache.**
 
 **Outbox dispatch commits the whole batch in one `SaveChangesAsync`, not one per message (⚠
 fixed).**
+
 - *Reason:* the original version called a repository method per message (`MarkProcessedAsync` /
   `IncrementAttemptsAsync`), each doing its own `FindAsync` + `SaveChangesAsync` — N round trips
   for a batch of N, flagged while checking the codebase for exactly this pattern.
@@ -307,6 +320,7 @@ fixed).**
 
 **Redis-backed distributed sliding window, not ASP.NET Core's in-memory fixed-window limiter (⚠
 fixed).**
+
 - *Reason:* the original implementation used `AddFixedWindowLimiter` — in-memory, per-process.
   Flagged during review: with N horizontally-scaled API instances behind a load balancer, each
   instance keeps its own independent counter, so the *effective* global limit becomes N × 20/10s,
@@ -329,6 +343,7 @@ fixed).**
 #### Auth, validation & API contract
 
 **JWT bearer auth with a mock/simplified issuer**, not a real identity provider.
+
 - *Reason:* the brief explicitly scopes this out — "the point is the middleware and claims
   handling, not building a full auth server."
 - *Alternative:* wire up a real OIDC provider (even a lightweight one like Duende IdentityServer
@@ -339,6 +354,7 @@ fixed).**
   this code were ever mistaken for production-ready auth.
 
 **Attribute-based (`DataAnnotations`) validation, not FluentValidation.**
+
 - *Reason:* explicit direction this session — validation rules here (`[Required]`, `[Range]`,
   `[StringLength]`, `[RegularExpression]`) are simple enough that a separate validator library is
   an unearned abstraction; `DataAnnotations` integrates with ASP.NET Core's model binding for
@@ -351,6 +367,7 @@ fixed).**
   need that, so the simpler option was kept.
 
 **Query-param-only routing** (`?walletId=`), never a path segment for a resource identifier.
+
 - *Reason:* explicit direction this session.
 - *Alternative:* conventional REST-style paths (`GET /wallets/{id}`, `GET /wallets/{id}/statement`).
 - *Trade-off:* path-based routing is more idiomatic REST and reads slightly cleaner in tooling
@@ -359,6 +376,7 @@ fixed).**
 
 **A uniform `{status, message, data}` envelope for success responses, RFC 7807 Problem Details
 for errors — not one shape for both.**
+
 - *Reason:* explicit direction this session (uniform envelope) reconciled with the brief's hard
   constraint that errors use RFC 7807 — forcing errors into `{status, message, data}` would lose
   the standard `type`/`title`/`detail`/`instance` fields and fail that constraint as written.
@@ -370,6 +388,7 @@ for errors — not one shape for both.**
 
 **The success envelope is built by a shared `NovaWalletControllerBase.Success<T>()` helper, not a
 global `IAsyncResultFilter`.**
+
 - *Reason:* every controller action calls one shared method rather than hand-constructing
   `{status, message, data}` inline — the goal (no accidentally-inconsistent shape) without adding
   a filter to the request pipeline.
@@ -382,6 +401,7 @@ global `IAsyncResultFilter`.**
 
 **One `NovaWalletExceptionHandler` that classifies exceptions by type, not one handler per
 exception type.**
+
 - *Reason:* `NovaWalletDomainException` carries its own `StatusCode`, so mapping *any* domain
   exception to a response is a one-line `exception is NovaWalletDomainException`
   check — a chain of per-type handlers would just be repeating that dispatch logic per exception
@@ -397,6 +417,7 @@ exception type.**
 
 **Correlation ID: middleware-generated, propagated via `HttpContext.Items`, re-applied by the
 exception handler.**
+
 - *Reason:* one ID per request, attached to logs, audit entries, and outbox events, so a single
   request's full trail (including its downstream event) can be found by one ID.
 - *Alternative:* rely on ASP.NET Core's built-in `HttpContext.TraceIdentifier` instead of a custom
@@ -410,7 +431,9 @@ exception handler.**
   into `HttpContext.Items`.)*
 
 **Liveness (`/health`) does zero dependency checks; readiness (`/health/ready`) checks SQL Server
+
 + RabbitMQ + Redis, each with a fresh connection attempt.**
+
 - *Reason:* an orchestrator should restart the process on liveness failure (nothing to check but
   "is it running") but only pull it from rotation, not restart it, on readiness failure
   (dependencies recover on their own) — conflating the two would cause restart loops when a
@@ -426,6 +449,7 @@ exception handler.**
 
 **Real SQL Server for every persistence-touching test, not SQLite or the EF Core InMemory
 provider.**
+
 - *Reason:* this system's money-safety guarantees are specifically about SQL Server behavior —
   unique-constraint exception *shape* (`SqlException.Number` 2627/2601, used to translate a
   duplicate-customer insert into a 409) and `RowVersion`/`rowversion` concurrency semantics. Both
@@ -470,17 +494,17 @@ parameter (`?walletId=...`). Every success response is wrapped in a uniform enve
 Every error response is RFC 7807 Problem Details (`application/problem+json`) — the two are
 scoped to success vs. failure respectively, not mixed.
 
-| Method & Path | Auth | Notes |
-|---|---|---|
-| `POST /auth/tokens` | — | Mock token issuance, body: `{customerId}` |
-| `POST /wallets` | JWT | body: `{customerId}` |
-| `GET /wallets?walletId=` | JWT | |
-| `POST /wallets/credit?walletId=` | JWT | body: `{amountMinor}` |
-| `POST /transfers` | JWT | header `Idempotency-Key`; rate-limited (20/10s, distributed via Redis); body: `{sourceWalletId, destinationWalletId, amountMinor}` |
-| `GET /wallets/statement?walletId=&page=&pageSize=` | JWT | paginated, newest first |
-| `GET /wallets/audit?walletId=&page=&pageSize=` | JWT | separate from the statement table, per the brief |
-| `GET /health` | — | liveness |
-| `GET /health/ready` | — | readiness — checks SQL Server + RabbitMQ + Redis |
+| Method & Path                                        | Auth | Notes                                                                                                                                 |
+| ---------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /auth/tokens`                                | —   | Mock token issuance, body:`{customerId}`                                                                                            |
+| `POST /wallets`                                    | JWT  | body:`{customerId}`                                                                                                                 |
+| `GET /wallets?walletId=`                           | JWT  |                                                                                                                                       |
+| `POST /wallets/credit?walletId=`                   | JWT  | body:`{amountMinor}`                                                                                                                |
+| `POST /transfers`                                  | JWT  | header`Idempotency-Key`; rate-limited (20/10s, distributed via Redis); body: `{sourceWalletId, destinationWalletId, amountMinor}` |
+| `GET /wallets/statement?walletId=&page=&pageSize=` | JWT  | paginated, newest first                                                                                                               |
+| `GET /wallets/audit?walletId=&page=&pageSize=`     | JWT  | separate from the statement table, per the brief                                                                                      |
+| `GET /health`                                      | —   | liveness                                                                                                                              |
+| `GET /health/ready`                                | —   | readiness — checks SQL Server + RabbitMQ + Redis                                                                                     |
 
 ### Security
 
