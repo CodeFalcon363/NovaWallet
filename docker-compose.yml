@@ -17,6 +17,9 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: "novawallet"
       RABBITMQ_DEFAULT_PASS: "NovaWallet_Dev_Pw1!"
+      # Without a fixed cookie, RabbitMQ tries to write/read one at /var/lib/rabbitmq/.erlang.cookie
+      # on first boot, which fails with EACCES on some Docker Desktop / Windows filesystem setups.
+      RABBITMQ_ERLANG_COOKIE: "NovaWallet-Dev-Only-Erlang-Cookie"
     ports:
       - "5672:5672"
       - "15672:15672" # management UI, for judges to inspect published events
