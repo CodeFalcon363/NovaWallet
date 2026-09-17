@@ -67,6 +67,7 @@ public static class ServiceExtension
     {
         services.AddSingleton(TimeProvider.System);
         services.AddOptions<DailyOutboundLimitOptions>().BindConfiguration(DailyOutboundLimitOptions.SectionName);
+        services.AddOptions<IdempotencyKeyTtlOptions>().BindConfiguration(IdempotencyKeyTtlOptions.SectionName);
 
         services.AddScoped<WalletService>();
         services.AddScoped<TransferService>();
@@ -117,6 +118,14 @@ public static class ServiceExtension
         services.AddSingleton<IEventPublisher, RabbitMqPublisher>();
         services.AddScoped<OutboxDispatcherService>();
         services.AddHostedService<OutboxBackgroundService>();
+        return services;
+    }
+
+    /// <summary>Bounds idempotency-record storage growth by purging expired, non-Pending rows.</summary>
+    public static IServiceCollection AddNovaWalletIdempotencyCleanup(this IServiceCollection services)
+    {
+        services.AddScoped<IdempotencyCleanupService>();
+        services.AddHostedService<IdempotencyCleanupBackgroundService>();
         return services;
     }
 

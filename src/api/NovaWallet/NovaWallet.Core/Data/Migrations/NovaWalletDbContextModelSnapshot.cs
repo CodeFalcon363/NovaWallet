@@ -172,6 +172,9 @@ namespace NovaWallet.Core.Data.Migrations
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("datetime2");
 
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("datetime2");
+
                     b.Property<string>("RequestFingerprint")
                         .IsRequired()
                         .HasMaxLength(128)
@@ -179,6 +182,12 @@ namespace NovaWallet.Core.Data.Migrations
 
                     b.Property<Guid?>("ResultTransactionId")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
 
                     b.Property<string>("Status")
                         .IsRequired()

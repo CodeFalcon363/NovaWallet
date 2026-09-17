@@ -18,7 +18,7 @@ public class IdempotencyRepository(NovaWalletDbContext context) : IIdempotencyRe
             .AsNoTracking()
             .FirstOrDefaultAsync(r => r.IdempotencyKey == idempotencyKey, cancellationToken);
 
-    public async Task<bool> TryReserveAsync(string idempotencyKey, string requestFingerprint, CancellationToken cancellationToken)
+    public async Task<bool> TryReserveAsync(string idempotencyKey, string requestFingerprint, DateTime expiresAtUtc, CancellationToken cancellationToken)
     {
         var record = new TransferIdempotencyRecord
         {
@@ -26,6 +26,7 @@ public class IdempotencyRepository(NovaWalletDbContext context) : IIdempotencyRe
             RequestFingerprint = requestFingerprint,
             Status = IdempotencyStatus.Pending,
             CreatedAtUtc = DateTime.UtcNow,
+            ExpiresAtUtc = expiresAtUtc,
         };
 
         context.TransferIdempotencyRecords.Add(record);
@@ -39,6 +40,40 @@ public class IdempotencyRepository(NovaWalletDbContext context) : IIdempotencyRe
             return true;
         }
         catch (DbUpdateException ex) when (SqlExceptionClassifier.IsUniqueConstraintViolation(ex))
+        {
+            context.Entry(record).State = EntityState.Detached;
+            return false;
+        }
+    }
+
+    public async Task<bool> TryClaimForRetryAsync(string idempotencyKey, string requestFingerprint, DateTime expiresAtUtc, byte[] expectedRowVersion, CancellationToken cancellationToken)
+    {
+        var record = await context.TransferIdempotencyRecords.FindAsync([idempotencyKey], cancellationToken);
+        if (record is null)
+        {
+            // Deleted between the caller's read and this claim attempt (e.g. by the cleanup job).
+            return false;
+        }
+
+        // Guard against the exact race this method exists to close: pin the UPDATE's WHERE
+        // clause to the RowVersion the caller actually observed, not whatever FindAsync just
+        // loaded — if the row changed since the caller's read, this makes the update affect
+        // zero rows (DbUpdateConcurrencyException) instead of silently overwriting a concurrent
+        // claim.
+        context.Entry(record).Property(r => r.RowVersion).OriginalValue = expectedRowVersion;
+
+        record.Status = IdempotencyStatus.Pending;
+        record.RequestFingerprint = requestFingerprint;
+        record.ExpiresAtUtc = expiresAtUtc;
+        record.ResultTransactionId = null;
+        record.CompletedAtUtc = null;
+
+        try
+        {
+            await context.SaveChangesAsync(cancellationToken);
+            return true;
+        }
+        catch (DbUpdateConcurrencyException)
         {
             context.Entry(record).State = EntityState.Detached;
             return false;
@@ -63,4 +98,9 @@ public class IdempotencyRepository(NovaWalletDbContext context) : IIdempotencyRe
         record.Status = IdempotencyStatus.Failed;
         record.CompletedAtUtc = DateTime.UtcNow;
     }
+
+    public Task<int> DeleteExpiredAsync(DateTime cutoffUtc, CancellationToken cancellationToken) =>
+        context.TransferIdempotencyRecords
+            .Where(r => r.ExpiresAtUtc <= cutoffUtc && r.Status != IdempotencyStatus.Pending)
+            .ExecuteDeleteAsync(cancellationToken);
 }

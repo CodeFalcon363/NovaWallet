@@ -88,7 +88,9 @@ namespace NovaWallet.Core.Data.Migrations
                     Status = table.Column<string>(type: "nvarchar(20)", maxLength: 20, nullable: false),
                     ResultTransactionId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
                     CreatedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false),
-                    CompletedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: true)
+                    CompletedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    ExpiresAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    RowVersion = table.Column<byte[]>(type: "rowversion", rowVersion: true, nullable: false)
                 },
                 constraints: table =>
                 {

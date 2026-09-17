@@ -24,6 +24,7 @@ namespace NovaWallet.Api
                 .AddNovaWalletApplicationServices()
                 .AddNovaWalletJwtAuthentication()
                 .AddNovaWalletOutboxDispatch()
+                .AddNovaWalletIdempotencyCleanup()
                 .AddNovaWalletRateLimiting()
                 .AddNovaWalletHealthChecks();
 
