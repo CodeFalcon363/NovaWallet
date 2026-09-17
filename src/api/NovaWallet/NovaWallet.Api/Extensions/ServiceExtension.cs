@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using NovaWallet.Api.BackgroundServices;
+using NovaWallet.Api.HealthChecks;
 using NovaWallet.Api.Security;
 using NovaWallet.Core.Data;
 using NovaWallet.Core.Interfaces;
@@ -138,6 +139,16 @@ public static class ServiceExtension
                 await context.HttpContext.Response.WriteAsJsonAsync(problem, cancellationToken);
             };
         });
+
+        return services;
+    }
+
+    /// <summary>Liveness/readiness endpoints suitable for container orchestration (NFR-OBS-3).</summary>
+    public static IServiceCollection AddNovaWalletHealthChecks(this IServiceCollection services)
+    {
+        services.AddHealthChecks()
+            .AddCheck<SqlServerHealthCheck>("sqlserver", tags: ["ready"])
+            .AddCheck<RabbitMqHealthCheck>("rabbitmq", tags: ["ready"]);
 
         return services;
     }

@@ -1,4 +1,6 @@
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.OpenApi.Models;
 using NovaWallet.Api.Extensions;
 using NovaWallet.Api.Middleware;
@@ -22,7 +24,8 @@ namespace NovaWallet.Api
                 .AddNovaWalletApplicationServices()
                 .AddNovaWalletJwtAuthentication()
                 .AddNovaWalletOutboxDispatch()
-                .AddNovaWalletRateLimiting();
+                .AddNovaWalletRateLimiting()
+                .AddNovaWalletHealthChecks();
 
             builder.Services.AddProblemDetails();
             builder.Services.AddExceptionHandler<NovaWalletExceptionHandler>();
@@ -79,6 +82,11 @@ namespace NovaWallet.Api
             app.UseAuthorization();
 
             app.MapControllers();
+
+            // Liveness: the process is up, no dependency checks (fast, for orchestrator restarts).
+            app.MapHealthChecks("/health", new HealthCheckOptions { Predicate = _ => false });
+            // Readiness: gates traffic on SQL Server + RabbitMQ actually being reachable.
+            app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") });
 
             app.Run();
         }
