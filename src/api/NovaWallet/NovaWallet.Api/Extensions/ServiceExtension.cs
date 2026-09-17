@@ -30,7 +30,12 @@ public static class ServiceExtension
     public static IServiceCollection AddNovaWalletPersistence(this IServiceCollection services)
     {
         services.AddDbContext<NovaWalletDbContext>((sp, options) =>
-            options.UseSqlServer(GetConnectionString(sp)));
+            options.UseSqlServer(GetConnectionString(sp), sqlOptions =>
+                // A container-healthy SQL Server doesn't guarantee every subsequent connection
+                // attempt succeeds instantly — transient errors (brief network blips, SQL Server
+                // still warming up its login subsystem right after docker-compose's healthcheck
+                // passes) get retried transparently instead of surfacing as a hard failure.
+                sqlOptions.EnableRetryOnFailure(maxRetryCount: 5, maxRetryDelay: TimeSpan.FromSeconds(10), errorNumbersToAdd: null)));
 
         services.AddSingleton<ISqlConnectionFactory>(sp =>
             new SqlConnectionFactory(GetConnectionString(sp)));

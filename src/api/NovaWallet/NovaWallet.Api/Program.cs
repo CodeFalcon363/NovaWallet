@@ -54,10 +54,7 @@ namespace NovaWallet.Api
 
             var app = builder.Build();
 
-            using (var scope = app.Services.CreateScope())
-            {
-                scope.ServiceProvider.GetRequiredService<NovaWalletDbContext>().Database.Migrate();
-            }
+            MigrateDatabaseWithRetry(app);
 
             // Runs first so the correlation ID is available to the exception handler and every
             // downstream log/audit/outbox write (NFR-OBS-2).
@@ -89,6 +86,35 @@ namespace NovaWallet.Api
             app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") });
 
             app.Run();
+        }
+
+        /// <summary>
+        /// One-time startup gate: docker-compose's healthcheck only proves SQL Server accepted a
+        /// TCP connection for `sqlcmd`, not that it's ready for every connection this process
+        /// opens a moment later. EnableRetryOnFailure (see AddNovaWalletPersistence) covers
+        /// transient errors during normal operation; this covers the same class of failure for
+        /// the one call — Migrate() — that runs before the app can serve any request at all.
+        /// </summary>
+        private static void MigrateDatabaseWithRetry(WebApplication app)
+        {
+            const int maxAttempts = 10;
+            var delay = TimeSpan.FromSeconds(3);
+            var logger = app.Services.GetRequiredService<ILogger<Program>>();
+
+            for (var attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                try
+                {
+                    using var scope = app.Services.CreateScope();
+                    scope.ServiceProvider.GetRequiredService<NovaWalletDbContext>().Database.Migrate();
+                    return;
+                }
+                catch (Exception ex) when (attempt < maxAttempts)
+                {
+                    logger.LogWarning(ex, "Database migration attempt {Attempt}/{MaxAttempts} failed; retrying in {Delay}s", attempt, maxAttempts, delay.TotalSeconds);
+                    Thread.Sleep(delay);
+                }
+            }
         }
     }
 }
