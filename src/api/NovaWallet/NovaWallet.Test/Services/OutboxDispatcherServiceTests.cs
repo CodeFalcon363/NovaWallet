@@ -47,7 +47,7 @@ public class OutboxDispatcherServiceTests(SqlServerFixture fixture)
         await context.SaveChangesAsync();
 
         var publisher = new FakeEventPublisher();
-        var dispatcher = new OutboxDispatcherService(new OutboxRepository(context), publisher);
+        var dispatcher = new OutboxDispatcherService(new OutboxRepository(context), publisher, new UnitOfWork(context));
 
         await DispatchUntilAsync(dispatcher, async () =>
         {
@@ -74,7 +74,7 @@ public class OutboxDispatcherServiceTests(SqlServerFixture fixture)
         await context.SaveChangesAsync();
 
         var publisher = new FakeEventPublisher { ShouldFail = true };
-        var dispatcher = new OutboxDispatcherService(new OutboxRepository(context), publisher);
+        var dispatcher = new OutboxDispatcherService(new OutboxRepository(context), publisher, new UnitOfWork(context));
 
         await DispatchUntilAsync(dispatcher, async () =>
         {
@@ -105,7 +105,7 @@ public class OutboxDispatcherServiceTests(SqlServerFixture fixture)
         await context.SaveChangesAsync();
 
         var publisher = new FakeEventPublisher();
-        var dispatcher = new OutboxDispatcherService(new OutboxRepository(context), publisher);
+        var dispatcher = new OutboxDispatcherService(new OutboxRepository(context), publisher, new UnitOfWork(context));
 
         // Drain whatever backlog exists (from other tests) so this isn't vacuously true just
         // because the batch never got that far.
